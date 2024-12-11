@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   StyleSheet,
   View,
@@ -10,20 +10,37 @@ import {
   StatusBar,
   KeyboardAvoidingView,
   Platform,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import NetInfo, { NetInfoState } from '@react-native-community/netinfo'; // Import NetInfo and types
+  Alert,
+  Linking,
+  Modal,
+  TouchableWithoutFeedback,
+  Keyboard,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import * as ImagePicker from "expo-image-picker"; // Import ImagePicker
+import * as Location from "expo-location"; // Import Location for geolocation
+import NetInfo from "@react-native-community/netinfo";
+
 
 type Message = {
   id: string;
   text: string;
   isUser: boolean;
+  image?: string; // For image support in messages
+  latitude?: number; // For storing location coordinates
+  longitude?: number;
 };
+
+const MANILA_LAT = 14.5995;
+const MANILA_LNG = 120.9842;
 
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [messageText, setMessageText] = useState('');
+  const [messageText, setMessageText] = useState("");
   const [isConnected, setIsConnected] = useState<boolean | null>(true); // Connection status
+  const [modalVisible, setModalVisible] = useState<boolean>(false); // For controlling the image modal visibility
+  const [selectedImage, setSelectedImage] = useState<string | null>(null); // To store the selected image URL
+  const [locationPermission, setLocationPermission] = useState<boolean>(false); // Track if permission is granted
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state: NetInfoState) => {
@@ -34,14 +51,83 @@ export default function App() {
     return () => unsubscribe(); // Cleanup the listener
   }, []);
 
+  // Function to request location permission
+  const requestLocationPermission = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission Denied", "You need to allow location access");
+      setLocationPermission(false);
+    } else {
+      setLocationPermission(true);
+    }
+  };
+
   const sendMessage = () => {
-    if (messageText.trim() !== '') {
+    if (messageText.trim() !== "") {
       setMessages((prevMessages) => [
         { id: Date.now().toString(), text: messageText, isUser: true },
         ...prevMessages,
       ]);
-      setMessageText('');
+      setMessageText("");
     }
+  };
+
+  // Camera button handler
+  const handleCameraPress = async () => {
+    const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+
+    if (!permissionResult.granted) {
+      Alert.alert(
+        "Permission Denied",
+        "You need to allow camera access to use this feature."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync();
+
+    if (!result.canceled) {
+      setMessages((prevMessages) => [
+        {
+          id: Date.now().toString(),
+          text: "Captured an image!",
+          isUser: true,
+          image: result.assets[0].uri,
+        },
+        ...prevMessages,
+      ]);
+    }
+  };
+
+  // Function to send the location as a message with a clickable pin
+  const handleLocationPress = async () => {
+    if (!locationPermission) {
+      Alert.alert("Permission Required", "You need to enable location permission first.");
+      return;
+    }
+
+    const location = await Location.getCurrentPositionAsync({});
+    const { latitude, longitude } = location.coords;
+
+    const locationMessage = `📍 Philippines, Manila: Click to view in Google Maps`;
+
+    setMessages((prevMessages) => [
+      { id: Date.now().toString(), text: locationMessage, isUser: true, latitude, longitude },
+      ...prevMessages,
+    ]);
+  };
+
+  // Open full-screen image modal
+  const openImageModal = (imageUri: string) => {
+    setSelectedImage(imageUri);
+    setModalVisible(true);
+    Keyboard.dismiss(); // Close the keyboard manually
+  };
+
+  // Close the modal
+  const closeImageModal = () => {
+    setModalVisible(false);
+    setSelectedImage(null);
   };
 
   return (
@@ -53,15 +139,15 @@ export default function App() {
       <View style={styles.connectionStatus}>
         <Text
           style={{
-            color: isConnected === false ? 'red' : isConnected === true ? 'green' : 'orange',
-            fontWeight: 'bold',
+            color: isConnected === false ? "red" : isConnected === true ? "green" : "orange",
+            fontWeight: "bold",
           }}
         >
           {isConnected === false
-            ? 'No Network Connection'
+            ? "No Network Connection"
             : isConnected === true
-            ? 'Connected'
-            : 'Unknown Network Status'}
+            ? "Connected"
+            : "Unknown Network Status"}
         </Text>
       </View>
 
@@ -73,39 +159,66 @@ export default function App() {
           inverted
           renderItem={({ item }) => (
             <View
-              style={[
-                styles.messageBubble,
-                item.isUser ? styles.userMessage : styles.otherMessage,
-              ]}
+              style={[styles.messageBubble, item.isUser ? styles.userMessage : styles.otherMessage]}
             >
-              <Text style={styles.messageText}>{item.text}</Text>
+              {item.text.includes("📍") ? (
+                <TouchableOpacity
+                  onPress={() =>
+                    Linking.openURL(`https://www.google.com/maps?q=${item.latitude},${item.longitude}`)
+                  }
+                >
+                 <Image
+                      source={require("../../assets/images/manila.png")}  // Use the correct path to the image
+                      style={{ width: 200, height: 250 }}  // Adjust size if needed
+                  />
+                </TouchableOpacity>
+              ) : item.image ? (
+                <TouchableOpacity onPress={() => openImageModal(item.image)}>
+                  <Image source={{ uri: item.image }} style={styles.messageImage} />
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.messageText}>{item.text}</Text>
+              )}
             </View>
           )}
         />
       </View>
 
       {/* Toolbar Component */}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.toolbar}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.toolbar}>
         <View style={styles.inputRow}>
-          <TouchableOpacity style={styles.cameraButton}>
-            <Image
-              source={require('../../assets/images/camera.jpg')} // Corrected path for the camera image
-              style={styles.cameraIcon}
-            />
+          {/* Camera button */}
+          <TouchableOpacity style={styles.cameraButton} onPress={handleCameraPress}>
+            <Image source={require("../../assets/images/camera.jpg")} style={styles.buttonIcon} />
           </TouchableOpacity>
+
+          {/* Location button */}
+          <TouchableOpacity
+            style={styles.locationButton}
+            onPress={async () => {
+              // Request location permission before accessing the location
+              await requestLocationPermission();
+              if (locationPermission) {
+                handleLocationPress();
+              }
+            }}
+          >
+            <Image source={require("../../assets/images/download.png")} style={styles.buttonIcon} />
+          </TouchableOpacity>
+
+          {/* Message Input */}
           <TextInput
             style={styles.input}
-            placeholder={isConnected ? 'Type a message...' : 'No Network Connection'}
+            placeholder={isConnected ? "Type a message..." : "No Network Connection"}
             placeholderTextColor="#888"
             value={messageText}
             onChangeText={setMessageText}
             editable={isConnected} // Disable input when disconnected
           />
+
+          {/* Send button */}
           <TouchableOpacity
-            style={[styles.sendButton, !isConnected && { backgroundColor: 'gray' }]}
+            style={[styles.sendButton, !isConnected && { backgroundColor: "gray" }]}
             onPress={sendMessage}
             disabled={!isConnected} // Disable send button when disconnected
           >
@@ -114,21 +227,16 @@ export default function App() {
         </View>
       </KeyboardAvoidingView>
 
-      {/* InputMethodEditor Component */}
-      <View style={styles.inputMethodEditor}>
-        <Image
-          source={require('../../assets/images/pikachu.jpg')} // Corrected path for Pikachu image
-          style={styles.image}
-        />
-        <Image
-          source={require('../../assets/images/pikachu.jpg')} // Corrected path for Pikachu image
-          style={styles.image}
-        />
-        <Image
-          source={require('../../assets/images/pikachu.jpg')} // Corrected path for Pikachu image
-          style={styles.image}
-        />
-      </View>
+      {/* Image Modal for fullscreen image */}
+      {selectedImage && (
+        <Modal visible={modalVisible} animationType="fade" transparent={true} onRequestClose={closeImageModal}>
+          <TouchableWithoutFeedback onPress={closeImageModal}>
+            <View style={styles.modalBackdrop}>
+              <Image source={{ uri: selectedImage }} style={styles.fullscreenImage} />
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+      )}
 
       {/* Tabs Component */}
       <View style={styles.tabs}>
@@ -143,100 +251,109 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: "white",
   },
   connectionStatus: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
     paddingHorizontal: 10,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
-    backgroundColor: 'white',
+    borderBottomColor: "#ddd",
+    backgroundColor: "white",
   },
   content: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: "white",
   },
   messageBubble: {
     marginVertical: 5,
     padding: 10,
     borderRadius: 10,
-    maxWidth: '75%',
+    maxWidth: "75%",
   },
   userMessage: {
-    backgroundColor: '#0078fe',
-    alignSelf: 'flex-end',
+    backgroundColor: "#0078fe",
+    alignSelf: "flex-end",
   },
   otherMessage: {
-    backgroundColor: '#f0f0f0',
-    alignSelf: 'flex-start',
+    backgroundColor: "#f0f0f0",
+    alignSelf: "flex-start",
   },
   messageText: {
-    color: 'black',
+    color: "black",
     fontSize: 16,
+  },
+  messageImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 10,
   },
   toolbar: {
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.04)',
-    backgroundColor: 'white',
+    borderTopColor: "rgba(0,0,0,0.04)",
+    backgroundColor: "white",
     paddingHorizontal: 10,
     paddingBottom: 10,
   },
   inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   input: {
     flex: 1,
     height: 40,
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: "#ccc",
     borderRadius: 20,
     paddingHorizontal: 10,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: "#f9f9f9",
   },
   sendButton: {
-    backgroundColor: '#0078fe',
+    backgroundColor: "#0078fe",
     paddingHorizontal: 15,
     paddingVertical: 8,
     borderRadius: 20,
     marginLeft: 10,
   },
   sendButtonText: {
-    color: 'white',
+    color: "white",
     fontSize: 16,
   },
   cameraButton: {
     marginRight: 10,
   },
-  cameraIcon: {
+  locationButton: {
+    marginRight: 10,
+  },
+  buttonIcon: {
     width: 30,
     height: 30,
   },
-  inputMethodEditor: {
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    backgroundColor: 'white',
-    paddingVertical: 10,
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.8)",
   },
-  image: {
-    width: 50,
-    height: 50,
+  fullscreenImage: {
+    width: "90%",
+    height: "80%",
+    resizeMode: "contain",
     borderRadius: 10,
   },
   tabs: {
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-evenly",
+    alignItems: "center",
     borderTopWidth: 1,
-    borderTopColor: '#ddd',
+    borderTopColor: "#ddd",
     paddingVertical: 10,
-    backgroundColor: 'white',
+    backgroundColor: "white",
   },
   tab: {
-    color: '#0078fe',
+    color: "#0078fe",
     fontSize: 16,
   },
 });
